@@ -158,18 +158,28 @@
         currentPath = "";
     }
 
-    async function fetchContents(path = "") {
-        const url = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${path}?ref=${BRANCH}`;
+    async function fetchContents(path = "", retries = 3) {
+        const url = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${path}?ref=${BRANCH}&cacheBust=${new Date().getTime()}`;
         try {
             const response = await fetch(url, {
-                headers: { "Authorization": `Bearer ${TOKEN}`, "Accept": "application/vnd.github+json" }
+                headers: { 
+                    "Authorization": `Bearer ${TOKEN}`, 
+                    "Accept": "application/vnd.github+json",
+                    "Cache-Control": "no-cache"
+                }
             });
+            
             if (!response.ok) throw new Error("Failed to fetch path contents.");
             const data = await response.json();
             renderFileList(Array.isArray(data) ? data : [data]);
         } catch (error) {
-            console.error(error);
-            alert("Could not load directory. Check your credentials or branch name.");
+            if (retries > 0) {
+                // If GitHub API index is still processing the commit, retry after a short delay
+                setTimeout(() => fetchContents(path, retries - 1), 600);
+            } else {
+                console.error(error);
+                alert("Could not load directory. Check your credentials or branch name.");
+            }
         }
     }
 
@@ -188,8 +198,7 @@
         }
 
         items.forEach(item => {
-            // Hide the internal .gitkeep placeholder file from showing up in the UI list
-            if (item.name === ".gitkeep") return;
+            if (item.name === ".gitkeep") return; // Skip showing raw .gitkeep files
 
             let isDir = item.type === "dir";
             let icon = isDir ? "📁" : "📄";
@@ -226,7 +235,11 @@
 
         await commitToGitHub(targetPath, contentBase64, `Create folder: ${folderName}`);
         document.getElementById("newFolderName").value = "";
-        fetchContents(currentPath);
+        
+        // Brief pause and forced fetch retry sequence to let GitHub register the new directory tree instantly
+        setTimeout(() => {
+            fetchContents(currentPath);
+        }, 500);
     }
 
     async function uploadFile(event) {
@@ -239,10 +252,13 @@
                 new Uint8Array(e.target.result).reduce((data, byte) => data + String.fromCharCode(byte), '')
             );
 
-            // Cleanly construct the file path whether at root or inside a subfolder
             let targetPath = currentPath ? `${currentPath}/${file.name}` : file.name;
             await commitToGitHub(targetPath, base64Content, `Upload document: ${file.name}`);
-            fetchContents(currentPath);
+            
+            setTimeout(() => {
+                fetchContents(currentPath);
+            }, 500);
+            
             alert(`Uploaded ${file.name} successfully!`);
         };
         reader.readAsArrayBuffer(file);
@@ -250,10 +266,8 @@
 
     async function commitToGitHub(path, contentBase64, message, sha = null) {
         let url = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${path}`;
-        
         let bodyData = { message: message, content: contentBase64, branch: BRANCH };
 
-        // If file already exists at this path, grab its SHA so GitHub allows the update/overwrite
         try {
             let existingCheck = await fetch(url, {
                 headers: { "Authorization": `Bearer ${TOKEN}` }
@@ -309,7 +323,9 @@
 
         if (response.ok) {
             alert("Deleted successfully!");
-            fetchContents(currentPath);
+            setTimeout(() => {
+                fetchContents(currentPath);
+            }, 500);
         } else {
             alert("Failed to delete item.");
         }
