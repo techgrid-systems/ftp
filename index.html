@@ -147,7 +147,6 @@
             return;
         }
 
-        // Hide config, show interface
         document.getElementById("configSection").style.display = "none";
         document.getElementById("managerInterface").style.display = "block";
         fetchContents();
@@ -189,15 +188,20 @@
         }
 
         items.forEach(item => {
-            let icon = item.type === "dir" ? "📁" : "📄";
+            if (item.name === ".gitkeep") return; // Skip showing raw .gitkeep files
+
+            let isDir = item.type === "dir";
+            let icon = isDir ? "📁" : "📄";
+            let typeLabel = isDir ? "directory" : "file";
+            
             let rowHtml = `
                 <tr class="file-row">
-                    <td onclick="${item.type === 'dir' ? `navigateTo('${item.path}')` : `window.open('${item.download_url}', '_blank')`}">
+                    <td onclick="${isDir ? `navigateTo('${item.path}')` : `window.open('${item.download_url}', '_blank')`}">
                         ${icon} ${item.name}
                     </td>
-                    <td>${item.type}</td>
+                    <td>${typeLabel}</td>
                     <td class="actions">
-                        <button class="btn-danger" onclick="deleteItem('${item.path}', '${item.sha}', '${item.type}')">Delete</button>
+                        <button class="btn-danger" onclick="deleteItem('${item.path}', '${item.sha}', '${typeLabel}')">Delete</button>
                     </td>
                 </tr>
             `;
@@ -216,7 +220,6 @@
         let folderName = document.getElementById("newFolderName").value.trim();
         if (!folderName) return alert("Enter a folder name.");
 
-        // GitHub needs a placeholder file (.gitkeep) to track an empty folder
         let targetPath = currentPath ? `${currentPath}/${folderName}/.gitkeep` : `${folderName}/.gitkeep`;
         let contentBase64 = btoa(""); 
 
@@ -263,12 +266,21 @@
     async function deleteItem(path, sha, type) {
         if (!confirm(`Are you sure you want to delete this ${type}?`)) return;
 
-        if (type === "dir") {
-            alert("To delete a folder, delete its contents or use the main repo interface, as folders are virtual in GitHub.");
-            return;
+        let targetPath = path;
+        if (type === "directory") {
+            targetPath = path + "/.gitkeep";
+            try {
+                let res = await fetch(`https://api.github.com/repos/${OWNER}/${REPO}/contents/${targetPath}`, {
+                    headers: { "Authorization": `Bearer ${TOKEN}` }
+                });
+                if (res.ok) {
+                    let d = await res.json();
+                    sha = d.sha;
+                }
+            } catch(e) {}
         }
 
-        let url = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${path}`;
+        let url = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${targetPath}`;
         let response = await fetch(url, {
             method: "DELETE",
             headers: {
@@ -276,7 +288,7 @@
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
-                message: `Delete ${path} via web manager`,
+                message: `Delete ${targetPath} via web manager`,
                 sha: sha,
                 branch: BRANCH
             })
