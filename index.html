@@ -188,7 +188,8 @@
         }
 
         items.forEach(item => {
-            if (item.name === ".gitkeep") return; // Skip showing raw .gitkeep files
+            // Hide the internal .gitkeep placeholder file from showing up in the UI list
+            if (item.name === ".gitkeep") return;
 
             let isDir = item.type === "dir";
             let icon = isDir ? "📁" : "📄";
@@ -238,6 +239,7 @@
                 new Uint8Array(e.target.result).reduce((data, byte) => data + String.fromCharCode(byte), '')
             );
 
+            // Cleanly construct the file path whether at root or inside a subfolder
             let targetPath = currentPath ? `${currentPath}/${file.name}` : file.name;
             await commitToGitHub(targetPath, base64Content, `Upload document: ${file.name}`);
             fetchContents(currentPath);
@@ -248,8 +250,19 @@
 
     async function commitToGitHub(path, contentBase64, message, sha = null) {
         let url = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${path}`;
+        
         let bodyData = { message: message, content: contentBase64, branch: BRANCH };
-        if (sha) bodyData.sha = sha;
+
+        // If file already exists at this path, grab its SHA so GitHub allows the update/overwrite
+        try {
+            let existingCheck = await fetch(url, {
+                headers: { "Authorization": `Bearer ${TOKEN}` }
+            });
+            if (existingCheck.ok) {
+                let existingData = await existingCheck.json();
+                bodyData.sha = existingData.sha;
+            }
+        } catch (e) {}
 
         let response = await fetch(url, {
             method: "PUT",
